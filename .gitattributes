@@ -1,0 +1,15 @@
+# Git decides binary-vs-text by looking for a NUL byte in the first 8000
+# bytes. A PDF written without stream compression can contain none at all,
+# so git stores it as text: GitHub then tries to render it as source, and
+# any end-of-line conversion silently corrupts it. Declare the types
+# explicitly rather than relying on that guess.
+*.pdf binary
+*.png binary
+*.jpg binary
+
+# Source files keep LF in the repository regardless of the checkout platform.
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf

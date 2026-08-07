@@ -1,0 +1,22 @@
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+# .cache holds downloaded models: gitignored, but mypy and flake8 walk the
+# tree regardless of .gitignore, so each needs telling separately.
+exclude = '^(\.venv|venv|\.cache|output)/'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+# Measure the agent's own modules only. Folding the test suite into the
+# denominator would inflate the number: test bodies execute simply by being
+# collected, so they sit near 100% regardless of what they prove.
+omit = ["tests/*", ".venv/*"]
