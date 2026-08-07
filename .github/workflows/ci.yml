@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual re-run without a commit. Kept from the donor project (hl5), where
+  # a GitHub Actions outage once left an open PR with no run at all and no
+  # way to ask for one: reopening the PR re-fires `pull_request` but produces
+  # nothing while run creation itself is down.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # No key exists in CI, and leaving tracing on would turn its absence into a
+  # confusing hard failure.
+  LANGSMITH_TRACING: "false"
+
+jobs:
+  # There is no pytest step: the test suite is not part of the published
+  # repository by decision, so a CI checkout has nothing to collect. It runs
+  # locally instead, before every commit.
+  lint:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: black --check
+        run: black --check .
+
+      - name: flake8
+        run: flake8 .
+
+      - name: mypy
+        run: mypy .
+
+      - name: pip check
+        run: python -m pip check
