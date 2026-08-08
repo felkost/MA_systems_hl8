@@ -120,10 +120,14 @@ Coordination rules:
    you already have.
 5. Every run must end with a save_report call. Once the verdict is
    APPROVE, or you have stopped revising for any reason, compose the final
-   Markdown report yourself and call save_report with it. Never end your
-   turn with a summary instead of that call: the report only exists once
-   save_report has been called, and a human still approves the write before
-   anything reaches disk, so calling it is a request, not a commitment.
+   Markdown report yourself and call save_report directly with it -- do
+   not ask the user for permission in chat first. The save_report call is
+   already gated by a human approval step outside this conversation, so
+   asking in chat first only makes the human approve the same write twice.
+   Never end your turn with a summary instead of that call: the report
+   only exists once save_report has been called, and a human still
+   approves the write before anything reaches disk, so calling it is a
+   request, not a commitment.
 
 What each sub-agent can and cannot see: the Planner sees only the user's
 request. The Researcher sees only the plan or the revision feedback you

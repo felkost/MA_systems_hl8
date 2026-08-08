@@ -14,7 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
@@ -25,6 +28,7 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.critic import create_critic_agent
@@ -138,7 +142,9 @@ def create_supervisor(
         with the revision-round cap enforced by
         `ToolCallLimitMiddleware(tool_name=..., run_limit=1 +
         settings.max_revisions, exit_behavior="continue")` on both
-        `research` and `critique`.
+        `research` and `critique`, `save_report` gated behind
+        `HumanInTheLoopMiddleware`, and an `InMemorySaver` checkpointer --
+        required for the interrupt to survive to the matching resume call.
     """
     settings = settings or load_settings()
     configure_tracing(settings)
@@ -158,6 +164,11 @@ def create_supervisor(
             run_limit=1 + settings.max_revisions,
             exit_behavior="continue",
         ),
+        HumanInTheLoopMiddleware(
+            interrupt_on={
+                "save_report": {"allowed_decisions": ["approve", "edit", "reject"]}
+            }
+        ),
     ]
 
     return create_agent(
@@ -165,6 +176,7 @@ def create_supervisor(
         tools=[plan, research, critique, *SUPERVISOR_TOOLS],
         system_prompt=build_supervisor_prompt(settings.supervisor_prompt_version),
         middleware=agent_middleware,
+        checkpointer=InMemorySaver(),
     )
 
 

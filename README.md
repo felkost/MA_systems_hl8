@@ -17,7 +17,7 @@ when the project closes out.
 - [x] Stage 3 — Researcher agent
 - [x] Stage 4 — Critic agent
 - [x] Stage 5 — Supervisor (agent-as-tool coordination)
-- [ ] Stage 6 — human-in-the-loop approval on report writes
+- [x] Stage 6 — human-in-the-loop approval on report writes
 - [ ] Stage 7 — explicit `StateGraph` orchestration path
 - [ ] Stage 8 — telemetry and reports
 - [ ] Stage 9 — LangSmith evaluation
