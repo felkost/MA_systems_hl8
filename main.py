@@ -16,11 +16,13 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 from langchain.agents.middleware.human_in_the_loop import Decision
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command, Interrupt
 
 import hitl
+import telemetry
 from config import Settings, apply_overrides, load_settings
 from orchestrator import create_orchestrator
 from retriever import IndexMismatchError, get_retriever
@@ -55,26 +57,40 @@ def configure_console() -> None:
     _icons = _ICONS_UTF8
 
 
-def build_run_config(thread_id: str, settings: Settings) -> RunnableConfig:
+def build_run_config(
+    thread_id: str,
+    settings: Settings,
+    *,
+    callbacks: list[BaseCallbackHandler] | None = None,
+) -> RunnableConfig:
     """Build the run config for one REPL session.
 
     Parameters
     ----------
     thread_id : str
-        Identifies the conversation to the checkpointer. Must stay the same
-        for the whole session -- a new value starts a new, empty memory.
+        Identifies the conversation to the checkpointer, and reused as
+        `telemetry`'s own session id. Must stay the same for the whole
+        session -- a new value starts a new, empty memory.
     settings : Settings
         Supplies `recursion_limit`.
+    callbacks : list of BaseCallbackHandler, optional
+        Handlers to attach to every run, such as `telemetry.TelemetryHandler`.
+        Omitted by default so a config without telemetry does not carry an
+        empty key.
 
     Returns
     -------
     RunnableConfig
-        `{"configurable": {"thread_id": ...}, "recursion_limit": ...}`.
+        `{"configurable": {"thread_id": ...}, "recursion_limit": ...}`, plus
+        `"callbacks"` when given.
     """
-    return RunnableConfig(
-        configurable={"thread_id": thread_id},
-        recursion_limit=settings.recursion_limit,
-    )
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": settings.recursion_limit,
+    }
+    if callbacks is not None:
+        config["callbacks"] = callbacks
+    return config
 
 
 def format_tool_call(name: str, args: dict[str, Any]) -> str:
@@ -269,7 +285,8 @@ def main() -> None:
 
     graph = _build_graph(settings)
     thread_id = str(uuid.uuid4())
-    config = build_run_config(thread_id, settings)
+    telemetry_handler = telemetry.TelemetryHandler(settings, session_id=thread_id)
+    config = build_run_config(thread_id, settings, callbacks=[telemetry_handler])
 
     print("Ready. Ask a research question (or type exit/quit).")
     while True:

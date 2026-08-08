@@ -77,7 +77,7 @@ def create_critic_agent(
         CriticVerificationMiddleware(),
     ]
 
-    return create_agent(
+    graph = create_agent(
         model=chat_model,
         tools=CRITIC_TOOLS,
         system_prompt=build_critic_prompt(
@@ -86,6 +86,11 @@ def create_critic_agent(
         response_format=CRITIC_RESPONSE_FORMAT,
         middleware=agent_middleware,
     )
+    # Read by telemetry.TelemetryHandler off on_tool_start's own metadata --
+    # confirmed by a probe script to survive nested invocation, so every
+    # tool call this graph's own ReAct loop makes attributes to "critic"
+    # regardless of which module invokes it.
+    return graph.with_config(metadata={"agent": "critic"}, tags=["agent:critic"])
 
 
 def _build_model(settings: Settings) -> ChatOpenAI:

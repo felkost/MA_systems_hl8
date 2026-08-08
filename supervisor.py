@@ -26,11 +26,12 @@ from langchain.agents.middleware.types import (
 )
 from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
+import telemetry
 from agents.critic import create_critic_agent
 from agents.planner import create_planner_agent
 from agents.research import create_research_agent
@@ -105,7 +106,9 @@ def critique(findings: str, runtime: ToolRuntime) -> str:
                 ]
             }
         )
-        return render_critique(result["structured_response"])
+        structured = result["structured_response"]
+        _log_verdict(runtime, structured.verdict)
+        return render_critique(structured)
     except Exception:
         return _SUB_AGENT_ERROR.format(agent="Critic", tool="critique")
 
@@ -115,6 +118,44 @@ def _first_human_text(messages: list[BaseMessage]) -> str:
         if isinstance(message, HumanMessage):
             return str(message.text)
     return ""
+
+
+def _log_verdict(runtime: ToolRuntime, verdict: str) -> None:
+    """Record the Critic's verdict, namespaced under this run's `thread_id`.
+
+    A `critique` call made outside a real graph run -- most of this
+    project's own tests, and any direct tool invocation -- carries no
+    `thread_id` in `runtime.config`, and must not raise or fall back to
+    some shared file; it simply logs nothing.
+    """
+    thread_id = runtime.config.get("configurable", {}).get("thread_id")
+    if thread_id is None:
+        return
+    round_number = max(0, _prior_critique_calls(runtime.state["messages"]) - 1)
+    telemetry.log_verdict(
+        load_settings(),
+        thread_id,
+        path="supervisor",
+        verdict=verdict,
+        round=round_number,
+    )
+
+
+def _prior_critique_calls(messages: list[BaseMessage]) -> int:
+    """Count `critique` tool calls already in the conversation.
+
+    Includes the call currently executing: a `ToolNode` appends the
+    triggering `AIMessage` to state before running the tool it names, so by
+    the time this function runs, that call is already counted -- callers
+    subtract one to get a 0-indexed round number.
+    """
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, AIMessage)
+        for call in message.tool_calls
+        if call["name"] == "critique"
+    )
 
 
 def create_supervisor(
@@ -171,12 +212,20 @@ def create_supervisor(
         ),
     ]
 
-    return create_agent(
+    graph = create_agent(
         model=chat_model,
         tools=[plan, research, critique, *SUPERVISOR_TOOLS],
         system_prompt=build_supervisor_prompt(settings.supervisor_prompt_version),
         middleware=agent_middleware,
         checkpointer=InMemorySaver(),
+    )
+    # Read by telemetry.TelemetryHandler off on_tool_start's own metadata --
+    # tags the Supervisor's own top-level tool calls (plan/research/critique/
+    # save_report) as "supervisor", distinct from the sub-agent each wrapper
+    # invokes, which carries its own "agent" tag that wins for its own
+    # nested tool calls (confirmed by a probe script).
+    return graph.with_config(
+        metadata={"agent": "supervisor"}, tags=["agent:supervisor"]
     )
 
 
