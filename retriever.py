@@ -11,6 +11,20 @@ Both stages are LangChain retrievers rather than plain functions.
 documents, so a trace shows the candidate list before and after reranking. A
 local `rerank(documents, query)` would give the same ranking but no record of
 it.
+
+`langchain_classic.retrievers` and `langchain_community.cross_encoders` are
+imported inside the functions that actually build a retriever, not at module
+scope. Confirmed by import-time probing rather than read off the imports:
+the `langchain_classic.retrievers` package itself -- not only
+`.document_compressors` -- eagerly imports `sentence_transformers` at its
+own top level, so every module that merely needs this one's types or
+functions (`tools.py`, and every `agents/*.py` module through it) paid for
+a model library it never loaded a model with.
+
+`torch` is a separate matter and is *not* deferred here, because it cannot
+be: `langchain_openai` pulls it in, and every agent factory needs
+`ChatOpenAI`. Measured on this checkout, `langchain_openai` alone accounts
+for ~11 s of the ~17 s `import tools` costs cold.
 """
 
 from __future__ import annotations
@@ -21,27 +35,20 @@ import re
 from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_chroma import Chroma
-from langchain_classic.retrievers import (
-    ContextualCompressionRetriever,
-    EnsembleRetriever,
-)
-from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-from langchain_community.cross_encoders import (
-    BaseCrossEncoder,
-    HuggingFaceCrossEncoder,
-)
-from langchain_community.retrievers import BM25Retriever
 from langchain_core.callbacks import Callbacks
-from langchain_core.documents import Document
+from langchain_core.documents import BaseDocumentCompressor, Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import OpenAIEmbeddings
 
 import paths
 from config import Settings, load_settings
+
+if TYPE_CHECKING:
+    from langchain_community.cross_encoders import BaseCrossEncoder
 
 # Manifest fields that make the stored vectors unusable when they differ.
 # `chunk_size` and `chunk_overlap` are recorded next to them but are not
@@ -60,34 +67,47 @@ class IndexMismatchError(RuntimeError):
     """The index on disk cannot answer questions under these settings."""
 
 
-class ScoredCrossEncoderReranker(CrossEncoderReranker):
-    """`CrossEncoderReranker` that keeps the score on the documents it keeps.
+def _build_reranker(
+    cross_encoder: "BaseCrossEncoder", top_n: int
+) -> BaseDocumentCompressor:
+    """Build a `CrossEncoderReranker` that keeps the score on the documents
+    it keeps.
 
     The stock implementation scores every candidate, sorts and truncates to
     `top_n`, then returns plain `Document` objects -- the score itself is
     discarded, confirmed by reading its source. `tools.knowledge_search`
     needs that number to tell the model when even the best match is weak.
-    """
 
-    def compress_documents(
-        self,
-        documents: Sequence[Document],
-        query: str,
-        callbacks: Callbacks | None = None,
-    ) -> Sequence[Document]:
-        scores = self.model.score(
-            [(query, document.page_content) for document in documents]
-        )
-        ranked = sorted(
-            zip(documents, scores, strict=True),
-            key=lambda pair: pair[1],
-            reverse=True,
-        )
-        kept = []
-        for document, score in ranked[: self.top_n]:
-            document.metadata = {**document.metadata, "rerank_score": score}
-            kept.append(document)
-        return kept
+    `ScoredCrossEncoderReranker` is defined here, not at module scope,
+    because its base class lives in the same package that costs the
+    `sentence_transformers`/`torch` import this module otherwise defers.
+    """
+    from langchain_classic.retrievers.document_compressors import (
+        CrossEncoderReranker,
+    )
+
+    class ScoredCrossEncoderReranker(CrossEncoderReranker):
+        def compress_documents(
+            self,
+            documents: Sequence[Document],
+            query: str,
+            callbacks: Callbacks | None = None,
+        ) -> Sequence[Document]:
+            scores = self.model.score(
+                [(query, document.page_content) for document in documents]
+            )
+            ranked = sorted(
+                zip(documents, scores, strict=True),
+                key=lambda pair: pair[1],
+                reverse=True,
+            )
+            kept = []
+            for document, score in ranked[: self.top_n]:
+                document.metadata = {**document.metadata, "rerank_score": score}
+                kept.append(document)
+            return kept
+
+    return ScoredCrossEncoderReranker(model=cross_encoder, top_n=top_n)
 
 
 def configure_model_cache(settings: Settings) -> Path:
@@ -110,11 +130,12 @@ def configure_model_cache(settings: Settings) -> Path:
     another project would otherwise decide where a large model is downloaded.
 
     `HF_HOME` alone is not enough, which is why `_cross_encoder` also passes
-    `cache_folder`. `huggingface_hub` computes its cache location once, when it
-    is imported, and importing this module already imports it through
-    `langchain_community.cross_encoders`. A value written here therefore
-    arrives too late for that library. `TORCH_HOME` is read on use and does
-    apply, and both variables still reach subprocesses.
+    `cache_folder`. `huggingface_hub` computes its cache location once, when
+    it is imported -- and even calling this function first, immediately
+    before `_cross_encoder`'s own deferred `langchain_community.cross_encoders`
+    import, is not a guarantee some earlier import elsewhere in the process
+    did not pull it in first. `TORCH_HOME` is read on use and does apply,
+    and both variables still reach subprocesses.
     """
     cache = paths.resolve(settings.model_cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
@@ -126,7 +147,7 @@ def configure_model_cache(settings: Settings) -> Path:
 def build_retriever(
     settings: Settings,
     embeddings: Embeddings | None = None,
-    cross_encoder: BaseCrossEncoder | None = None,
+    cross_encoder: "BaseCrossEncoder | None" = None,
 ) -> BaseRetriever:
     """Assemble the ensemble and the reranker over an existing index.
 
@@ -160,6 +181,12 @@ def build_retriever(
     --------
     get_retriever : The cached form that takes no arguments.
     """
+    from langchain_classic.retrievers import (
+        ContextualCompressionRetriever,
+        EnsembleRetriever,
+    )
+    from langchain_community.retrievers import BM25Retriever
+
     _verify_manifest(settings)
     chunks = _load_chunks(settings)
 
@@ -176,9 +203,8 @@ def build_retriever(
             1 - settings.ensemble_bm25_weight,
         ],
     )
-    reranker = ScoredCrossEncoderReranker(
-        model=cross_encoder or _cross_encoder(settings),
-        top_n=settings.rerank_top_n,
+    reranker = _build_reranker(
+        cross_encoder or _cross_encoder(settings), settings.rerank_top_n
     )
     return ContextualCompressionRetriever(
         base_compressor=reranker,
@@ -275,7 +301,7 @@ def _embeddings(settings: Settings) -> Embeddings:
     return OpenAIEmbeddings(**arguments)
 
 
-def _cross_encoder(settings: Settings) -> BaseCrossEncoder:
+def _cross_encoder(settings: Settings) -> "BaseCrossEncoder":
     """Load the reranking model on the configured device and cache directory.
 
     `model_kwargs` is not Hugging Face's argument of the same name:
@@ -283,8 +309,15 @@ def _cross_encoder(settings: Settings) -> BaseCrossEncoder:
     `sentence_transformers.CrossEncoder` as keyword arguments, which is how
     `cache_folder` reaches it. That parameter, not `HF_HOME`, decides where the
     model is downloaded -- see `configure_model_cache`.
+
+    `HuggingFaceCrossEncoder` is imported here, not at module scope: it is
+    what actually pulls in `sentence_transformers`/`torch`, and this
+    function is the one place in the module that needs it at runtime. The
+    cache directories are set before that import, on the chance it matters.
     """
     cache = configure_model_cache(settings)
+    from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+
     return HuggingFaceCrossEncoder(
         model_name=settings.reranker_model,
         model_kwargs={
