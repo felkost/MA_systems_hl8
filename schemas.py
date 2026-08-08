@@ -11,11 +11,20 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+# OpenAI's strict structured-output mode refuses any schema that does not
+# supply `additionalProperties: false`, and a plain Pydantic model omits the
+# key entirely. `extra="forbid"` is what emits it. Strict mode matters
+# because without it the provider treats `required` as a hint: a
+# `CritiqueResult` really did come back with no `verdict` at all.
+_STRUCTURED_OUTPUT_CONFIG = ConfigDict(extra="forbid")
 
 
 class ResearchPlan(BaseModel):
     """A decomposed research request, produced by the Planner."""
+
+    model_config = _STRUCTURED_OUTPUT_CONFIG
 
     goal: str = Field(description="What we are trying to answer")
     search_queries: list[str] = Field(
@@ -27,6 +36,8 @@ class ResearchPlan(BaseModel):
 
 class CritiqueResult(BaseModel):
     """The Critic's verdict on one round of research findings."""
+
+    model_config = _STRUCTURED_OUTPUT_CONFIG
 
     verdict: Literal["APPROVE", "REVISE"]
     is_fresh: bool = Field(

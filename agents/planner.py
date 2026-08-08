@@ -14,6 +14,7 @@ from langchain.agents.middleware.types import (
     InputAgentState,
     OutputAgentState,
 )
+from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
@@ -28,6 +29,12 @@ from tracing import configure_tracing
 # experiments this project varies (stage 11) tune the Researcher and Critic
 # budgets, not how much the Planner may look around before it decomposes.
 PLANNER_TOOL_CALL_LIMIT = 4
+
+# Passing the bare schema lets the framework auto-detect a strategy and
+# build it *without* `strict`, which leaves the provider free to treat the
+# schema's `required` list as a hint and return a plan missing a field.
+# Naming the strategy explicitly is what puts `"strict": true` on the wire.
+PLANNER_RESPONSE_FORMAT = ProviderStrategy(ResearchPlan, strict=True)
 
 
 def create_planner_agent(
@@ -62,7 +69,7 @@ def create_planner_agent(
         model=chat_model,
         tools=PLANNER_TOOLS,
         system_prompt=build_planner_prompt(settings.planner_prompt_version),
-        response_format=ResearchPlan,
+        response_format=PLANNER_RESPONSE_FORMAT,
         middleware=[ToolCallLimitMiddleware(run_limit=PLANNER_TOOL_CALL_LIMIT)],
     )
 
