@@ -7,17 +7,23 @@ prescribes -- nothing here is applied unconditionally.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
     ContextT,
+    ModelRequest,
+    ModelResponse,
     ResponseT,
 )
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
+
+from prompts import CRITIC_VERIFICATION_INSTRUCTION
+
+_VERIFICATION_TOOLS = frozenset({"web_search", "read_url", "knowledge_search"})
 
 
 def _run_tool_call_ids(messages: list[BaseMessage], tool_name: str) -> list[str]:
@@ -91,3 +97,63 @@ class ReadUrlCapMiddleware(AgentMiddleware[AgentState[ResponseT], ContextT, Resp
                 status="error",
             )
         return handler(request)
+
+
+class CriticVerificationMiddleware(
+    AgentMiddleware[AgentState[ResponseT], ContextT, ResponseT]
+):
+    """Forces the Critic to verify at least one claim before it verdicts.
+
+    `response_format=CritiqueResult` lets the model end the turn with a
+    verdict and no verification call at all -- under `ProviderStrategy` that
+    is a message with no tool calls, under `ToolStrategy` (what a fake model
+    without provider-strategy support resolves to, e.g. in tests) it is a
+    tool call to the synthetic structured-output tool, which is not a call
+    to `web_search`/`read_url`/`knowledge_search` either. Either way, if
+    none of those three tools ran earlier this turn, this middleware re-runs
+    the model call once with `CRITIC_VERIFICATION_INSTRUCTION` appended. The
+    retried response is returned as-is, whatever it contains -- one-shot,
+    the same shape as `ReadUrlCapMiddleware`'s "since the last
+    `HumanMessage`" scoping, so a model that skips verification twice in a
+    row cannot make this middleware loop.
+    """
+
+    def __init__(self, min_verification_calls: int = 1) -> None:
+        super().__init__()
+        self.min_verification_calls = min_verification_calls
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT]:
+        response = handler(request)
+        if self._calls_a_verification_tool(response) or self._verified_earlier(request):
+            return response
+
+        retry_request = request.override(
+            messages=[
+                *request.messages,
+                HumanMessage(content=CRITIC_VERIFICATION_INSTRUCTION),
+            ]
+        )
+        return handler(retry_request)
+
+    def _verified_earlier(self, request: ModelRequest[ContextT]) -> bool:
+        # `AgentState["messages"]` is `list[AnyMessage]`, a Union alias;
+        # `list` is invariant, so mypy rejects it as a `list[BaseMessage]`
+        # argument even though every member of the union is one.
+        messages = cast("list[BaseMessage]", request.state["messages"])
+        verified_calls = sum(
+            len(_run_tool_call_ids(messages, tool_name))
+            for tool_name in _VERIFICATION_TOOLS
+        )
+        return verified_calls >= self.min_verification_calls
+
+    @staticmethod
+    def _calls_a_verification_tool(response: ModelResponse[ResponseT]) -> bool:
+        return any(
+            isinstance(message, AIMessage)
+            and any(call["name"] in _VERIFICATION_TOOLS for call in message.tool_calls)
+            for message in response.result
+        )

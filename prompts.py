@@ -12,10 +12,13 @@ re-export does not change shape as they fill in.
 
 from __future__ import annotations
 
-from tools import PLANNER_TOOLS, RESEARCHER_TOOLS
+from datetime import date
+
+from tools import CRITIC_TOOLS, PLANNER_TOOLS, RESEARCHER_TOOLS
 
 _planner_tool_names = ", ".join(tool.name for tool in PLANNER_TOOLS)
 _researcher_tool_names = ", ".join(tool.name for tool in RESEARCHER_TOOLS)
+_critic_tool_names = ", ".join(tool.name for tool in CRITIC_TOOLS)
 
 _P1 = f"""You are the Planner in a multi-agent research system.
 
@@ -66,9 +69,42 @@ each source (a URL, or a knowledge-base source and page). Do not address
 the end user and do not call save_report -- your output is read by the
 Critic and the Supervisor, not the person who asked the question."""
 
+_C1 = f"""You are the Critic in a multi-agent research system. Today's date
+is {{today}}.
+
+Your job is to independently verify the Researcher's findings, not to
+approve them by default. A critique that only restates the Researcher's own
+conclusions as evidence has verified nothing -- check claims against the
+same sources the Researcher used, or fresher ones.
+
+Tools available to you: {_critic_tool_names}. Use them the way the
+Researcher does: web_search to find sources, read_url to read one in full,
+knowledge_search for anything the local knowledge base might cover. Verify
+at least one factual claim from the findings before you decide on a
+verdict.
+
+Evaluate the findings on three named dimensions:
+- freshness: are the sources current as of today's date, or does a fresh
+  search turn up newer information the findings missed? Flag anything
+  outdated.
+- completeness: does the research fully cover the user's original request?
+  Name any aspect or subtopic the findings do not address.
+- structure: are the findings logically organized, with clear citations,
+  ready to become a report?
+
+Every entry in gaps must name a source or a search you ran to find it.
+Return verdict "APPROVE" only when all three dimensions hold; otherwise
+return "REVISE" with concrete revision_requests the Researcher can act on."""
+
+CRITIC_VERIFICATION_INSTRUCTION = (
+    "You returned a verdict without calling web_search, read_url or "
+    "knowledge_search this turn. Verify at least one factual claim from the "
+    "findings using one of those tools, then return your verdict."
+)
+
 PLANNER_PROMPTS: dict[str, str] = {"p1": _P1}
 RESEARCHER_PROMPTS: dict[str, str] = {"r1": _R1}
-CRITIC_PROMPTS: dict[str, str] = {}
+CRITIC_PROMPTS: dict[str, str] = {"c1": _C1}
 SUPERVISOR_PROMPTS: dict[str, str] = {}
 
 
@@ -103,14 +139,30 @@ def build_researcher_prompt(version: str) -> str:
     return _lookup("researcher", RESEARCHER_PROMPTS, version)
 
 
-def build_critic_prompt(version: str) -> str:
-    """Look up the Critic's system prompt by version.
+def build_critic_prompt(version: str, *, today: date) -> str:
+    """Look up the Critic's system prompt by version and inject the date.
 
-    See Also
-    --------
-    build_planner_prompt : Same lookup contract.
+    Parameters
+    ----------
+    version : str
+        A key of `CRITIC_PROMPTS`, normally `Settings.critic_prompt_version`.
+    today : date
+        The current date, injected because freshness is meaningless without
+        one -- the caller supplies it so the prompt never reads the system
+        clock on its own.
+
+    Returns
+    -------
+    str
+        The registered prompt text with `today` filled in.
+
+    Raises
+    ------
+    KeyError
+        If `version` is not registered.
     """
-    return _lookup("critic", CRITIC_PROMPTS, version)
+    template = _lookup("critic", CRITIC_PROMPTS, version)
+    return template.format(today=today.isoformat())
 
 
 def build_supervisor_prompt(version: str) -> str:
