@@ -17,6 +17,7 @@ the model never learns that the tool exists.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import urlparse
@@ -250,7 +251,11 @@ def save_report(filename: str, content: str) -> str:
         output_directory = Path(settings.output_dir).resolve()
         output_directory.mkdir(parents=True, exist_ok=True)
 
-        report_path = (output_directory / f"{safe_stem}.md").resolve()
+        # Prefixed with the save time (to the minute) so two reports the
+        # model names the same way, in different runs, do not silently
+        # overwrite each other -- confirmed happening in a real run.
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        report_path = (output_directory / f"{timestamp}-{safe_stem}.md").resolve()
         if report_path.parent != output_directory:
             return "ERROR: Report path is outside the output directory."
 
