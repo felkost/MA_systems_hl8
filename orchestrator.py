@@ -95,13 +95,20 @@ def create_orchestrator(
         A direct `graph.invoke(...)` in a test, without a `thread_id` in
         `config`, has nothing to namespace a verdict log under -- it simply
         logs nothing rather than raising or falling back to a shared file.
+
+        `load_settings()` is called here rather than reusing the `settings`
+        this factory closed over, because `config.override_output_dir` is a
+        `ContextVar` entered *per run* -- an evaluation sweep enters it long
+        after the graph was compiled. A captured `settings` would send every
+        concurrent example's verdicts to the directory that was current at
+        build time; `supervisor.py::_log_verdict` already resolves it this
+        way for the same reason.
         """
         thread_id = config.get("configurable", {}).get("thread_id")
         if thread_id is None:
             return
-        assert settings is not None
         telemetry.log_verdict(
-            settings,
+            load_settings(),
             thread_id,
             path="orchestrator",
             verdict=verdict,
