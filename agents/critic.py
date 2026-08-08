@@ -22,6 +22,7 @@ from langchain.agents.middleware.types import (
     InputAgentState,
     OutputAgentState,
 )
+from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
@@ -32,6 +33,12 @@ from prompts import build_critic_prompt
 from schemas import CritiqueResult
 from tools import CRITIC_TOOLS
 from tracing import configure_tracing
+
+# Passing the bare schema lets the framework auto-detect a strategy and
+# build it *without* `strict`, which leaves the provider free to omit
+# `verdict` -- the one field the whole revision loop reads. Naming the
+# strategy explicitly is what puts `"strict": true` on the wire.
+CRITIC_RESPONSE_FORMAT = ProviderStrategy(CritiqueResult, strict=True)
 
 
 def create_critic_agent(
@@ -76,7 +83,7 @@ def create_critic_agent(
         system_prompt=build_critic_prompt(
             settings.critic_prompt_version, today=date.today()
         ),
-        response_format=CritiqueResult,
+        response_format=CRITIC_RESPONSE_FORMAT,
         middleware=agent_middleware,
     )
 
