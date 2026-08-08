@@ -1,9 +1,9 @@
 """Configuration read from the environment and `.env`.
 
-Every tunable value lives here. Prompt text lives in `prompts.py`; this
-module ends with a documented re-export of its four `build_*_prompt`
-functions once `prompts.py` exists (stage 2), so a reviewer grepping
-`config.py` finds all four names.
+Every tunable value lives here. Prompt text lives in `prompts.py` because
+prompt version is an evaluation axis; this module ends with a re-export of
+its four `build_*_prompt` functions, so a reviewer grepping `config.py`
+finds all four names.
 """
 
 from __future__ import annotations
@@ -257,3 +257,27 @@ def load_settings() -> Settings:
     if override is None:
         return settings
     return settings.model_copy(update={"output_dir": override})
+
+
+# Re-exported at the bottom, not the top: `prompts` imports `tools`, and
+# `tools` imports `Settings`/`load_settings` from this module. Importing
+# `prompts` only after both names are already bound breaks that cycle --
+# `tools`'s own `from config import ...` resolves against this
+# already-initialized module instead of failing on a half-built one.
+from prompts import (  # noqa: E402
+    build_critic_prompt,
+    build_planner_prompt,
+    build_researcher_prompt,
+    build_supervisor_prompt,
+)
+
+__all__ = [
+    "Settings",
+    "apply_overrides",
+    "load_settings",
+    "override_output_dir",
+    "build_planner_prompt",
+    "build_researcher_prompt",
+    "build_critic_prompt",
+    "build_supervisor_prompt",
+]
