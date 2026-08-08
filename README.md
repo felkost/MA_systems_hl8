@@ -15,7 +15,7 @@ when the project closes out.
 - [x] Stage 1 — RAG foundation (Chroma, hybrid retrieval, tools)
 - [x] Stage 2 — Planner agent
 - [x] Stage 3 — Researcher agent
-- [ ] Stage 4 — Critic agent
+- [x] Stage 4 — Critic agent
 - [ ] Stage 5 — Supervisor (agent-as-tool coordination)
 - [ ] Stage 6 — human-in-the-loop approval on report writes
 - [ ] Stage 7 — explicit `StateGraph` orchestration path
