@@ -18,7 +18,7 @@ when the project closes out.
 - [x] Stage 4 — Critic agent
 - [x] Stage 5 — Supervisor (agent-as-tool coordination)
 - [x] Stage 6 — human-in-the-loop approval on report writes
-- [ ] Stage 7 — explicit `StateGraph` orchestration path
+- [x] Stage 7 — explicit `StateGraph` orchestration path
 - [ ] Stage 8 — telemetry and reports
 - [ ] Stage 9 — LangSmith evaluation
 - [ ] Stage 10 — knowledge graph (Neo4j)

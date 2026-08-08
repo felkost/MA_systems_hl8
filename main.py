@@ -9,6 +9,7 @@ asked in the session, including every interrupt/resume cycle inside it.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import uuid
 from collections.abc import Iterator
@@ -20,7 +21,8 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command, Interrupt
 
 import hitl
-from config import Settings, load_settings
+from config import Settings, apply_overrides, load_settings
+from orchestrator import create_orchestrator
 from retriever import IndexMismatchError, get_retriever
 from supervisor import create_supervisor
 
@@ -222,12 +224,50 @@ def _is_exit_command(text: str) -> bool:
     return text.strip().lower() in _EXIT_COMMANDS
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse this process's command-line arguments.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Arguments to parse instead of `sys.argv[1:]`. Tests pass this
+        explicitly instead of patching `sys.argv`.
+
+    Returns
+    -------
+    argparse.Namespace
+        `orchestration` is `None` when the flag was not given -- the signal
+        to leave `Settings.orchestration` (env-configured, default
+        `"supervisor"`) untouched, not a third orchestration value.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--orchestration", choices=["supervisor", "graph"], default=None
+    )
+    return parser.parse_args(argv)
+
+
+def _build_graph(settings: Settings) -> Any:
+    """Build the compiled graph for `settings.orchestration`.
+
+    Both `create_supervisor` and `create_orchestrator` return a graph the
+    REPL drives identically through `stream_turn`/`resume_turn` -- this is
+    the one place that chooses which of the two gets built.
+    """
+    if settings.orchestration == "supervisor":
+        return create_supervisor(settings)
+    return create_orchestrator(settings)
+
+
 def main() -> None:
     configure_console()
+    args = _parse_args()
     settings = load_settings()
+    if args.orchestration is not None:
+        settings = apply_overrides(settings, {"orchestration": args.orchestration})
     _warm_retriever()
 
-    graph = create_supervisor(settings)
+    graph = _build_graph(settings)
     thread_id = str(uuid.uuid4())
     config = build_run_config(thread_id, settings)
 
