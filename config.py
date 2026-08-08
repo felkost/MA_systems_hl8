@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -259,25 +259,37 @@ def load_settings() -> Settings:
     return settings.model_copy(update={"output_dir": override})
 
 
-# Re-exported at the bottom, not the top: `prompts` imports `tools`, and
-# `tools` imports `Settings`/`load_settings` from this module. Importing
-# `prompts` only after both names are already bound breaks that cycle --
-# `tools`'s own `from config import ...` resolves against this
-# already-initialized module instead of failing on a half-built one.
-from prompts import (  # noqa: E402
-    build_critic_prompt,
-    build_planner_prompt,
-    build_researcher_prompt,
-    build_supervisor_prompt,
+# Re-exported through module __getattr__ (PEP 562), not a static import.
+# `tools`, `graph` and `retriever` each do `from config import Settings,
+# load_settings` at module level; a static `from prompts import ...` here
+# imports `prompts` eagerly to satisfy the re-export, and `prompts` imports
+# `tools` to list the Planner's tools -- closing a cycle among these
+# modules. Placing the import after `Settings`/`load_settings` are already
+# defined only breaks that cycle when `config` happens to be the first of
+# them to be imported, which is not guaranteed (e.g. `python -c "import
+# tools"` hits it starting from the other side). Deferring the lookup to
+# first attribute access removes the cycle instead of depending on import
+# order to avoid it.
+_PROMPT_BUILDER_NAMES = (
+    "build_planner_prompt",
+    "build_researcher_prompt",
+    "build_critic_prompt",
+    "build_supervisor_prompt",
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name in _PROMPT_BUILDER_NAMES:
+        import prompts
+
+        return getattr(prompts, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Settings",
     "apply_overrides",
     "load_settings",
     "override_output_dir",
-    "build_planner_prompt",
-    "build_researcher_prompt",
-    "build_critic_prompt",
-    "build_supervisor_prompt",
+    *_PROMPT_BUILDER_NAMES,
 ]
