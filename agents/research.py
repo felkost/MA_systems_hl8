@@ -66,11 +66,18 @@ def create_research_agent(
         ReadUrlCapMiddleware(settings.max_read_url_per_search),
     ]
 
-    return create_agent(
+    graph = create_agent(
         model=chat_model,
         tools=RESEARCHER_TOOLS,
         system_prompt=build_researcher_prompt(settings.researcher_prompt_version),
         middleware=agent_middleware,
+    )
+    # Read by telemetry.TelemetryHandler off on_tool_start's own metadata --
+    # confirmed by a probe script to survive nested invocation, so every
+    # tool call this graph's own ReAct loop makes attributes to "researcher"
+    # regardless of which module invokes it.
+    return graph.with_config(
+        metadata={"agent": "researcher"}, tags=["agent:researcher"]
     )
 
 

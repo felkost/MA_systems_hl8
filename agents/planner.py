@@ -65,13 +65,18 @@ def create_planner_agent(
     configure_tracing(settings)
     chat_model = model or _build_model(settings)
 
-    return create_agent(
+    graph = create_agent(
         model=chat_model,
         tools=PLANNER_TOOLS,
         system_prompt=build_planner_prompt(settings.planner_prompt_version),
         response_format=PLANNER_RESPONSE_FORMAT,
         middleware=[ToolCallLimitMiddleware(run_limit=PLANNER_TOOL_CALL_LIMIT)],
     )
+    # Read by telemetry.TelemetryHandler off on_tool_start's own metadata --
+    # confirmed by a probe script to survive nested invocation, so every
+    # tool call this graph's own ReAct loop makes attributes to "planner"
+    # regardless of which module invokes it.
+    return graph.with_config(metadata={"agent": "planner"}, tags=["agent:planner"])
 
 
 def _build_model(settings: Settings) -> ChatOpenAI:

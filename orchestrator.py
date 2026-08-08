@@ -21,6 +21,7 @@ from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -28,6 +29,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 import hitl
+import telemetry
 from agents.critic import create_critic_agent
 from agents.planner import create_planner_agent
 from agents.research import create_research_agent
@@ -87,6 +89,25 @@ def create_orchestrator(
     settings = settings or load_settings()
     configure_tracing(settings)
 
+    def _log_verdict(config: RunnableConfig, verdict: str, round_number: int) -> None:
+        """Record a verdict under this run's own `thread_id`.
+
+        A direct `graph.invoke(...)` in a test, without a `thread_id` in
+        `config`, has nothing to namespace a verdict log under -- it simply
+        logs nothing rather than raising or falling back to a shared file.
+        """
+        thread_id = config.get("configurable", {}).get("thread_id")
+        if thread_id is None:
+            return
+        assert settings is not None
+        telemetry.log_verdict(
+            settings,
+            thread_id,
+            path="orchestrator",
+            verdict=verdict,
+            round=round_number,
+        )
+
     def plan_node(state: ResearchState) -> dict[str, Any]:
         request_text = _first_human_text(state["messages"])
         result = create_planner_agent(settings, model=model).invoke(
@@ -120,7 +141,7 @@ def create_orchestrator(
             ],
         }
 
-    def critique_node(state: ResearchState) -> dict[str, Any]:
+    def critique_node(state: ResearchState, config: RunnableConfig) -> dict[str, Any]:
         request_text = _first_human_text(state["messages"])
         result = create_critic_agent(settings, model=model).invoke(
             {
@@ -135,6 +156,7 @@ def create_orchestrator(
         )
         structured = result["structured_response"]
         rendered = render_critique(structured)
+        _log_verdict(config, structured.verdict, state.get("revision_round", 0))
         update: dict[str, Any] = {
             "critique": rendered,
             "verdict": structured.verdict,
@@ -181,7 +203,15 @@ def create_orchestrator(
     )
     graph.add_edge("write", END)
 
-    return graph.compile(checkpointer=InMemorySaver())
+    compiled = graph.compile(checkpointer=InMemorySaver())
+    # Read by telemetry.TelemetryHandler off on_tool_start's own metadata --
+    # tags write_node's own save_report call (not itself a tagged sub-agent
+    # graph) as "orchestrator"; each node's own sub-agent invocation carries
+    # its own "agent" tag that wins for its own nested tool calls (confirmed
+    # by a probe script).
+    return compiled.with_config(
+        metadata={"agent": "orchestrator"}, tags=["agent:orchestrator"]
+    )
 
 
 def _first_human_text(messages: list[BaseMessage]) -> str:
