@@ -12,8 +12,8 @@ installation steps, an architecture diagram and a usage transcript, lands
 when the project closes out.
 
 - [x] Stage 0 — repository, CI, agent documentation contract
-- [ ] Stage 1 — RAG foundation (Chroma, hybrid retrieval, tools)
-- [ ] Stage 2 — Planner agent
+- [x] Stage 1 — RAG foundation (Chroma, hybrid retrieval, tools)
+- [x] Stage 2 — Planner agent
 - [ ] Stage 3 — Researcher agent
 - [ ] Stage 4 — Critic agent
 - [ ] Stage 5 — Supervisor (agent-as-tool coordination)
