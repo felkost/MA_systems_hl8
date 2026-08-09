@@ -33,8 +33,9 @@ from pydantic import ValidationError
 import paths
 from config import Settings, load_settings
 from graph import (
+    GRAPH_EXTRACTION_CONCURRENCY,
     GraphUnavailableError,
-    extract_triples,
+    extract_triples_batch,
     extract_triples_freeform,
     get_driver,
     write_triples,
@@ -216,22 +217,31 @@ def ingest_graph(
     triples_written = 0
     schema_predicates: set[str] = set()
     freeform_predicates: set[str] = set()
-    for index, chunk in enumerate(chunks):
-        text = str(chunk["text"])
-        metadata = chunk["metadata"]
-        source = f"{metadata['source']}|{metadata['page']}"
-
-        triples = extract_triples(text, extraction_model)
-        schema_predicates.update(triple.predicate for triple in triples)
-        triples_written += write_triples(
-            graph_driver, triples, source, settings.neo4j_database
+    window_size = GRAPH_EXTRACTION_CONCURRENCY
+    for start in range(0, len(chunks), window_size):
+        window = chunks[start : start + window_size]
+        texts = [str(chunk["text"]) for chunk in window]
+        extracted = extract_triples_batch(
+            texts, extraction_model, max_concurrency=window_size
         )
 
-        if index < sample_size:
-            free_triples = extract_triples_freeform(text, extraction_model)
-            freeform_predicates.update(
-                free_triple.predicate.strip().lower() for free_triple in free_triples
+        for offset, (chunk, triples) in enumerate(zip(window, extracted)):
+            metadata = chunk["metadata"]
+            source = f"{metadata['source']}|{metadata['page']}"
+
+            schema_predicates.update(triple.predicate for triple in triples)
+            # Writes stay sequential: they are local and fast next to a model
+            # round trip, and one writer keeps the MERGE order predictable.
+            triples_written += write_triples(
+                graph_driver, triples, source, settings.neo4j_database
             )
+
+            if start + offset < sample_size:
+                free_triples = extract_triples_freeform(texts[offset], extraction_model)
+                freeform_predicates.update(
+                    free_triple.predicate.strip().lower()
+                    for free_triple in free_triples
+                )
 
     return GraphIngestStats(
         chunks=len(chunks),

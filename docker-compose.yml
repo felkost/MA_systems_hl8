@@ -1,0 +1,57 @@
+# Neo4j for the knowledge graph `ingest.py --graph` builds and `graph_search`
+# reads. Nothing else in the system needs it: every agent starts without it,
+# and `graph_search` returns an error string rather than failing a run.
+#
+#   docker compose up -d       # before `python ingest.py --graph`
+#   docker compose down        # when the graph work is done
+#
+# To validate this file, always add --no-interpolate: a plain
+# `docker compose config` resolves NEO4J_AUTH to the real NEO4J_PASSWORD
+# from .env and prints it in clear text.
+#
+#   docker compose config --no-interpolate
+#
+# `docker compose down` stops the container but leaves the WSL VM resident.
+# To reclaim its memory, quit Docker Desktop and then run `wsl --shutdown`;
+# neither step alone releases it.
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: hl8-neo4j
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt, what `graph.build_driver` connects to
+    environment:
+      # Never a literal here: this file is published. The value comes from
+      # .env, which is not.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+
+      # Sized for a development machine whose WSL VM is capped at 2 GB, not
+      # for Neo4j's own autosizing, which reads the host and asks for far
+      # more than a corpus of a dozen papers needs. Exceeding the cap gets
+      # the process OOM-killed inside the VM, where the failure looks like a
+      # database dying mid-query rather than an allocation error.
+      # Initial equals max so the real footprint is visible immediately
+      # instead of appearing under load.
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 256m
+      NEO4J_server_memory_pagecache_size: 128m
+    volumes:
+      - neo4j_data:/data
+    # Deliberately not `always`: Docker Desktop starts its VM on launch, and
+    # an always-restarting Neo4j would take its memory back on every session,
+    # including the ones that do no graph work at all.
+    restart: "no"
+    healthcheck:
+      # The Bolt driver parses its URI without connecting, so a container
+      # that is up is not yet a database that answers. This is what tells an
+      # operator when `ingest.py --graph` can actually start.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  neo4j_data:
