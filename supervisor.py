@@ -37,7 +37,7 @@ from agents.planner import create_planner_agent
 from agents.research import create_research_agent
 from config import Settings, load_settings
 from prompts import build_supervisor_prompt
-from schemas import render_critique, render_plan
+from schemas import RESEARCH_INPUT_TEMPLATE, render_critique, render_plan
 from tools import SUPERVISOR_TOOLS
 from tracing import configure_tracing
 
@@ -72,15 +72,24 @@ def plan(request: str) -> str:
 
 
 @tool
-def research(request: str) -> str:
+def research(request: str, runtime: ToolRuntime) -> str:
     """Execute a research plan, or a revision request, and return findings.
 
     Pass the rendered plan on the first call, and the critic's
     revision_requests as feedback on any later call.
     """
+    original_request = _first_human_text(runtime.state["messages"])
     try:
         result = create_research_agent(load_settings()).invoke(
-            {"messages": [HumanMessage(request)]}
+            {
+                "messages": [
+                    HumanMessage(
+                        RESEARCH_INPUT_TEMPLATE.format(
+                            request=original_request, task=request
+                        )
+                    )
+                ]
+            }
         )
         return str(result["messages"][-1].text)
     except Exception:

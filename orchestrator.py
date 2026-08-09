@@ -34,7 +34,7 @@ from agents.critic import create_critic_agent
 from agents.planner import create_planner_agent
 from agents.research import create_research_agent
 from config import Settings, load_settings
-from schemas import render_critique, render_plan
+from schemas import RESEARCH_INPUT_TEMPLATE, render_critique, render_plan
 from tools import save_report
 from tracing import configure_tracing
 
@@ -129,14 +129,23 @@ def create_orchestrator(
     def research_node(state: ResearchState) -> dict[str, Any]:
         revision_round = state.get("revision_round", 0)
         if revision_round == 0:
-            request_text = state["plan"]
+            task_text = state["plan"]
         else:
-            request_text = (
+            task_text = (
                 "Revise the research based on this critique.\n\n"
                 f"{state['critique']}\n\nPrior findings:\n{state['findings']}"
             )
+        original_request = _first_human_text(state["messages"])
         result = create_research_agent(settings, model=model).invoke(
-            {"messages": [HumanMessage(request_text)]}
+            {
+                "messages": [
+                    HumanMessage(
+                        RESEARCH_INPUT_TEMPLATE.format(
+                            request=original_request, task=task_text
+                        )
+                    )
+                ]
+            }
         )
         findings = str(result["messages"][-1].text)
         return {

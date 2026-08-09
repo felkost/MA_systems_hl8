@@ -65,6 +65,19 @@ class ReportDraft(BaseModel):
     content: str = Field(description="Markdown content of the report")
 
 
+# Shared by both coordination paths' Researcher input: `supervisor.py`'s
+# `research` tool and `orchestrator.py`'s `research_node` each paraphrase
+# the user's request into a plan or a revision task, and a paraphrase drops
+# whatever the coordinator did not think mattered -- observed for real, a
+# request naming the knowledge graph reached the Researcher as topic
+# sub-questions with the graph unmentioned, and `graph_search` was never
+# called. Both paths forward the user's own wording alongside their own
+# task text so this does not depend on either coordinator remembering to.
+RESEARCH_INPUT_TEMPLATE = (
+    "Original request: {request}\n\nYour task for this round:\n{task}"
+)
+
+
 def render_plan(plan: ResearchPlan) -> str:
     """Render a `ResearchPlan` as compact markdown for the Supervisor.
 

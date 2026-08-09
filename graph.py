@@ -21,7 +21,7 @@ from functools import lru_cache
 from typing import Any, Literal, get_args
 
 import neo4j
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from pydantic import BaseModel, Field
 
 from config import Settings, load_settings
@@ -38,6 +38,11 @@ Predicate = Literal[
 ]
 
 _ARTICLES = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+
+# Extraction calls in flight at once during a corpus pass. Chosen to cut the
+# sequential hour down to minutes without turning a latency limit into a
+# provider rate limit.
+GRAPH_EXTRACTION_CONCURRENCY = 8
 
 
 class Triple(BaseModel):
@@ -122,6 +127,15 @@ def normalize_entity(name: str) -> str:
     return " ".join(stripped.lower().split())
 
 
+def _extraction_prompt(text: str) -> str:
+    """Render the schema-constrained extraction prompt for one passage."""
+    return _EXTRACTION_PROMPT.format(
+        predicates=", ".join(get_args(Predicate)),
+        entity_types=", ".join(get_args(EntityType)),
+        text=text,
+    )
+
+
 def extract_triples(text: str, model: BaseChatModel) -> list[Triple]:
     """Extract schema-constrained relations from one chunk of text.
 
@@ -136,18 +150,63 @@ def extract_triples(text: str, model: BaseChatModel) -> list[Triple]:
     -------
     list of Triple
         Empty when the passage states no relation the schema can represent.
+
+    See Also
+    --------
+    extract_triples_batch : The bulk path corpus ingestion uses. This is a
+        one-element call into it, so both share a single prompt and a single
+        response-narrowing rule.
     """
-    prompt = _EXTRACTION_PROMPT.format(
-        predicates=", ".join(get_args(Predicate)),
-        entity_types=", ".join(get_args(EntityType)),
-        text=text,
-    )
-    result = model.with_structured_output(ExtractedTriples).invoke(prompt)
+    return extract_triples_batch([text], model)[0]
+
+
+def extract_triples_batch(
+    texts: list[str],
+    model: BaseChatModel,
+    max_concurrency: int = GRAPH_EXTRACTION_CONCURRENCY,
+) -> list[list[Triple]]:
+    """Extract relations from several passages with concurrent model calls.
+
+    Parameters
+    ----------
+    texts : list of str
+        Chunk texts, extracted independently of one another.
+    model : BaseChatModel
+        Chat model bound to `ExtractedTriples` through `with_structured_output`.
+    max_concurrency : int, default=GRAPH_EXTRACTION_CONCURRENCY
+        Model calls in flight at once.
+
+    Returns
+    -------
+    list of list of Triple
+        One list per input, in input order; empty where the passage states no
+        relation the schema can represent.
+
+    Notes
+    -----
+    Extraction is one independent call per chunk, so the corpus-sized run is
+    bounded by round-trip latency rather than by any ordering between chunks.
+    Issuing them sequentially made a full corpus pass take about an hour of
+    wall time for the same tokens and the same result -- a long window in
+    which a single interruption costs the entire run, since nothing here
+    resumes. `max_concurrency` is bounded rather than unlimited: thousands of
+    simultaneous requests trade the latency wall for a rate-limit one.
+    """
+    if not texts:
+        return []
+    # Declared as the wider element type `Runnable.batch` accepts: a bare
+    # `list[str]` is rejected on `list` invariance, not on the values.
+    prompts: list[LanguageModelInput] = [_extraction_prompt(text) for text in texts]
+    structured = model.with_structured_output(ExtractedTriples)
+    results = structured.batch(prompts, config={"max_concurrency": max_concurrency})
     # with_structured_output can return a bare dict when the caller asks for
     # the raw response alongside the parsed one; this call never does, so the
     # assert is a real narrowing, not a suppression.
-    assert isinstance(result, ExtractedTriples)
-    return result.triples
+    extracted = []
+    for result in results:
+        assert isinstance(result, ExtractedTriples)
+        extracted.append(result.triples)
+    return extracted
 
 
 def extract_triples_freeform(text: str, model: BaseChatModel) -> list[FreeTriple]:
