@@ -2,7 +2,7 @@
 the reference `plan -> research -> critique -> save_report` trajectory, and
 does an LLM judge consider it accurate.
 
-`docs/implementation-plan-hl8.md` names
+The obvious choice is
 `create_trajectory_match_evaluator(trajectory_match_mode="unordered")`, but
 probing the installed `agentevals` before trusting it for a real sweep found
 `"unordered"` mode is `_is_trajectory_superset` in *both* directions -- with
@@ -10,13 +10,13 @@ probing the installed `agentevals` before trusting it for a real sweep found
 multiset match, no better tolerance for an extra revision round than
 `"strict"` mode itself. A real run that gets `REVISE`d once makes two
 `research`/`critique` calls instead of one, which is a correct outcome
-(`docs/task-hl8.md` acceptance criterion 5), not a deviation from the
+(acceptance criterion 5 of the assignment), not a deviation from the
 reference. `"superset"` mode (only `output ⊇ reference`, checked one
 direction) combined with `tool_args_match_mode="ignore"` (call arguments
 differ by round -- revision feedback text, updated findings -- and were
 never meant to be matched literally) is what actually tolerates this,
 confirmed against the installed library with a scripted two-round
-trajectory before this replaced the plan's literal choice.
+trajectory before it replaced the obvious choice.
 """
 
 from __future__ import annotations

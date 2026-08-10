@@ -50,9 +50,9 @@ def _row(
     return {"inputs": {"question": question}, "outputs": outputs}
 
 
-# The assignment's own worked example (docs/task-hl8.md) -- kept as row one
-# so a spot-check against the console transcript in the assignment text is
-# always one row away.
+# The assignment's own worked example -- kept as row one so a spot-check
+# against the console transcript in the assignment text is always one row
+# away.
 EVAL_EXAMPLES: list[EvalExample] = [
     _row(
         "Compare RAG approaches: naive, sentence-window, and parent-child. "

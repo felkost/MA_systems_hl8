@@ -221,8 +221,8 @@ def verdict_is_justified(
 ) -> dict[str, Any]:
     """Whether the Critic's verdict is consistent with its own dimensions.
 
-    The direct measurement for the standing Open Question
-    (`insights.md`, "Critic verdict vs. its own dimensions"): `c1` requires
+    The direct measurement for the standing open question of whether the
+    Critic's verdict agrees with its own dimensions: `c1` requires
     "APPROVE only when all three [dimensions] hold", a necessary but not a
     sufficient condition, so a `REVISE` with all three `True` and empty
     `gaps`/`revision_requests` is formally allowed by the prompt and wrong

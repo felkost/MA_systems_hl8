@@ -4,7 +4,7 @@ Each cell overrides one `Settings` field via `apply_overrides` and calls
 `run_eval.run_evaluation` with its own `experiment_prefix` -- the default
 `f"hl8-{orchestration}"` is identical for every arm of a same-path
 comparison, so a shared-dataset sweep run under it cannot be told apart
-afterwards (`docs/implementation-plan-hl8.md`, Amendment 31).
+afterwards.
 
 Experiment 4 (`c1` vs `c2`) runs on the graph path only: `supervisor.py`'s
 `plan`/`research`/`critique` wrappers are module-level `@tool` functions
@@ -53,8 +53,8 @@ def _experiment_4_matrix(repeats: int = 3) -> list[ExperimentCell]:
     """`c1` vs `c2`, graph path only, `repeats` sweeps per arm.
 
     `verdict_is_justified` moved 0.78 -> 0.50/0.64 across two sweeps of
-    identical code on the identical dataset (spread ~14 points at n=18,
-    `insights.md`, 2026-08-09 Mistake) -- one sweep per arm cannot tell the
+    identical code on the identical dataset, a spread of ~14 points at
+    n=18 measured on 2026-08-09 -- one sweep per arm cannot tell the
     prompts apart.
     """
     return [

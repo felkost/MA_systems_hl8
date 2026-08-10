@@ -1,7 +1,7 @@
 """Structured outputs shared by the Planner, Critic and the report write path.
 
 Field sets for `ResearchPlan` and `CritiqueResult` are copied verbatim from
-`docs/task-hl8.md`, not designed from scratch: `sources_to_check` stays
+the assignment, not designed from scratch: `sources_to_check` stays
 `list[str]` rather than a `Literal`, because its own description allows the
 model to answer "both", which a `Literal["knowledge_base", "web"]` would
 reject.

@@ -3,7 +3,7 @@ ingestion fails mid-sweep.
 
 2026-08-09: eight stage-11 cells exited 0 but the workspace's monthly trace
 spend cap was reached partway through, so LangSmith recorded most rows as
-"no run for this example" (`insights.md`). The agents still ran and
+"no run for this example". The agents still ran and
 `telemetry.py` still wrote `output/eval-runs/*/logs/*.jsonl` locally --
 that write never depended on the LangSmith connection succeeding.
 
