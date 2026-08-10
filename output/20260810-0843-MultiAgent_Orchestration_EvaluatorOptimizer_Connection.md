@@ -1,0 +1,1 @@
+The knowledge graph does not contain information or relations about "multi-agent orchestration protocols" or the "evaluator-optimizer pattern," so I cannot trace their connection or follow it further within the current knowledge graph. If you want, I can try to provide an explanation based on general knowledge or research outside the graph.

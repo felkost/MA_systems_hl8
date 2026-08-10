@@ -35,6 +35,13 @@ _icons = _ICONS_ASCII
 _RESULT_PREVIEW_LENGTH = 300
 _APPROVAL_BANNER = "=" * 60
 
+_SAVE_REPORT_TOOL = "save_report"
+# The graph path's write node, whose own message carries the tool's outcome.
+_WRITE_NODE = "write"
+# tools.save_report's success prefix. Anything else it returns -- an ERROR
+# string, or the graph path's "Report not saved: ..." -- is not a write.
+_SAVE_SUCCESS_PREFIX = "Report saved to:"
+
 
 def configure_console() -> None:
     """Reconfigure stdout/stderr to UTF-8, or keep the plain ASCII icons.
@@ -157,9 +164,68 @@ def stream_turn(
     *,
     thread_id: str,
 ) -> None:
-    """Stream one full turn, resolving every interrupt it raises along the way."""
+    """Stream one full turn, resolving every interrupt it raises along the way.
+
+    The turn ends with one line stating what actually reached disk. That line
+    is built from the tool's own outcome rather than from anything the model
+    said, because the two can disagree -- see `render_save_status`.
+    """
     chunks = graph.stream(payload, config=config, stream_mode="updates")
-    _drive(graph, chunks, config, thread_id=thread_id)
+    outcomes = _drive(graph, chunks, config, thread_id=thread_id)
+    print(render_save_status(outcomes))
+
+
+def save_report_outcome(message: BaseMessage, *, node_name: str) -> str | None:
+    """`save_report`'s own return string carried by `message`, or `None`.
+
+    Parameters
+    ----------
+    message : BaseMessage
+        One message from a `stream_mode="updates"` chunk.
+    node_name : str
+        The graph node that emitted it, which is what identifies the graph
+        path's write -- that path calls `save_report` inside `write_node`
+        rather than through a `ToolNode`, so its outcome arrives as an
+        ordinary `AIMessage` with no tool call to recognise it by.
+
+    Returns
+    -------
+    str or None
+        The tool's outcome string, or `None` for any other message.
+
+    Notes
+    -----
+    A model sentence claiming a report was saved is deliberately not accepted
+    here. A real session produced exactly that claim -- "I have saved the
+    report" -- after the human had rejected the write twice and nothing
+    reached disk.
+    """
+    if isinstance(message, ToolMessage) and message.name == _SAVE_REPORT_TOOL:
+        return str(message.content)
+    if node_name == _WRITE_NODE and isinstance(message, AIMessage):
+        return str(message.text)
+    return None
+
+
+def render_save_status(outcomes: list[str]) -> str:
+    """Render the one authoritative line about this turn's report write.
+
+    Parameters
+    ----------
+    outcomes : list of str
+        Every `save_report` outcome observed this turn, in order. A turn can
+        hold several: an `edit` decision sends the Supervisor back to compose
+        a revised report and call the tool again.
+
+    Returns
+    -------
+    str
+        The last successful write, or a statement that nothing was saved.
+    """
+    for outcome in reversed(outcomes):
+        if outcome.startswith(_SAVE_SUCCESS_PREFIX):
+            return f"[system] {outcome}"
+    return "[system] No report was saved this turn."
 
 
 def _drive(
@@ -168,15 +234,16 @@ def _drive(
     config: RunnableConfig,
     *,
     thread_id: str,
-) -> None:
+) -> list[str]:
+    outcomes: list[str] = []
     for chunk in chunks:
         if "__interrupt__" in chunk:
             interrupts = cast("tuple[Interrupt, ...]", chunk["__interrupt__"])
             decisions = _resolve_interrupt(interrupts)
             resumed = resume_turn(graph, config, decisions, thread_id=thread_id)
-            _drive(graph, resumed, config, thread_id=thread_id)
-            return
-        _print_update(chunk)
+            return outcomes + _drive(graph, resumed, config, thread_id=thread_id)
+        outcomes.extend(_print_update(chunk))
+    return outcomes
 
 
 def _resolve_interrupt(interrupts: tuple[Interrupt, ...]) -> list[Decision]:
@@ -204,12 +271,17 @@ def _prompt_text(prompt: str) -> str:
     return input(prompt).strip()
 
 
-def _print_update(chunk: dict[str, Any]) -> None:
+def _print_update(chunk: dict[str, Any]) -> list[str]:
+    outcomes: list[str] = []
     for node_name, update in chunk.items():
         if node_name.endswith(".after_model") or not isinstance(update, dict):
             continue
         for message in update.get("messages", []):
             _print_message(message)
+            outcome = save_report_outcome(message, node_name=node_name)
+            if outcome is not None:
+                outcomes.append(outcome)
+    return outcomes
 
 
 def _print_message(message: BaseMessage) -> None:

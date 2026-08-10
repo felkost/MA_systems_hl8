@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import json
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,18 +52,33 @@ class ReportPaths:
 
 
 def read_events(path: Path) -> list[dict[str, Any]]:
-    """Read one JSONL telemetry file.
+    """Read one JSONL telemetry file, tolerating a torn line.
 
     Returns an empty list for a file that does not exist yet, so a report
     can be built before any session has run.
+
+    Notes
+    -----
+    `ToolNode` runs several tool calls of one turn concurrently, each
+    reaching `TelemetryHandler.on_tool_end` on its own thread, and the
+    writes there are not serialised. A real corpus of 48 session files held
+    two records split across physical lines by that race: a fragment of one
+    record's middle, and a lone closing brace. Raising on either would
+    discard every other event in the file and end the whole report, so a
+    line that does not parse costs only itself. The race in `telemetry.py`
+    is recorded as an open defect rather than fixed here.
     """
     if not path.is_file():
         return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
 
 
 def read_all_tool_events(settings: Settings) -> list[dict[str, Any]]:
@@ -212,11 +228,39 @@ def rerank_movement(events: list[dict[str, Any]]) -> list[tuple[int, int]]:
 
 # -- charts -----------------------------------------------------------------
 
+# A default 6.4-inch canvas fits about six short labels. Beyond that the tick
+# labels overlap into an unreadable smear -- seen for real on a 28-run chart --
+# so the canvas grows with the number of categories and long labels are angled.
+_BASE_CHART_WIDTH = 6.4
+_WIDTH_PER_LABEL = 0.5
+_MAX_CHART_WIDTH = 18.0
+_CHART_HEIGHT = 4.8
+_CROWDED_LABEL_COUNT = 6
+_LONG_LABEL_LENGTH = 10
+
+
+def _category_axes(labels: Sequence[object]) -> tuple[Any, Any]:
+    """Create a figure whose width matches how many categories it must hold."""
+    width = max(_BASE_CHART_WIDTH, _WIDTH_PER_LABEL * len(labels) + 2.0)
+    return plt.subplots(figsize=(min(width, _MAX_CHART_WIDTH), _CHART_HEIGHT))
+
+
+def _angle_labels(ax: Any, labels: Sequence[object]) -> None:
+    """Angle the tick labels when they are too many or too long to sit flat."""
+    if not labels:
+        return
+    longest = max(len(str(label)) for label in labels)
+    if len(labels) <= _CROWDED_LABEL_COUNT and longest <= _LONG_LABEL_LENGTH:
+        return
+    for label in ax.get_xticklabels():
+        label.set_rotation(45)
+        label.set_horizontalalignment("right")
+
 
 def plot_tool_calls_by_agent(counts: dict[str, dict[str, int]], path: Path) -> None:
     """Stacked bar: which agent drives tool usage, and with which tool."""
-    fig, ax = plt.subplots()
     agents = sorted(counts)
+    fig, ax = _category_axes(agents)
     tools = sorted({tool for tool_counts in counts.values() for tool in tool_counts})
     bottom = [0.0] * len(agents)
     for tool in tools:
@@ -225,6 +269,7 @@ def plot_tool_calls_by_agent(counts: dict[str, dict[str, int]], path: Path) -> N
         bottom = [b + v for b, v in zip(bottom, values, strict=True)]
     ax.set_ylabel("calls")
     ax.set_title("Tool calls by agent")
+    _angle_labels(ax, agents)
     if tools:
         ax.legend()
     _save(fig, path)
@@ -234,8 +279,8 @@ def plot_tool_latency_by_agent(
     stats: dict[str, tuple[float, float]], path: Path
 ) -> None:
     """Grouped bars: median and p95 seconds per agent."""
-    fig, ax = plt.subplots()
     agents = sorted(stats)
+    fig, ax = _category_axes(agents)
     positions = range(len(agents))
     width = 0.35
     ax.bar(
@@ -253,17 +298,19 @@ def plot_tool_latency_by_agent(
     ax.set_xticks(list(positions), agents)
     ax.set_ylabel("seconds")
     ax.set_title("Tool latency by agent")
+    _angle_labels(ax, agents)
     ax.legend()
     _save(fig, path)
 
 
 def plot_tool_error_rates(rates: dict[str, float], path: Path) -> None:
     """Bar chart: how unreliable each tool is, `read_url` vs the rest."""
-    fig, ax = plt.subplots()
     tools = sorted(rates)
+    fig, ax = _category_axes(tools)
     ax.bar(tools, [rates[tool] * 100 for tool in tools])
     ax.set_ylabel("error rate, %")
     ax.set_title("Tool error rate")
+    _angle_labels(ax, tools)
     _save(fig, path)
 
 
@@ -271,8 +318,8 @@ def plot_verdict_distribution(
     distribution: dict[str, dict[str, int]], path: Path
 ) -> None:
     """Grouped bars: APPROVE vs REVISE counts, one group per coordination path."""
-    fig, ax = plt.subplots()
     paths_ = sorted(distribution)
+    fig, ax = _category_axes(paths_)
     verdicts = sorted({v for counts in distribution.values() for v in counts})
     positions = range(len(paths_))
     width = 0.35 if len(verdicts) > 1 else 0.6
@@ -283,6 +330,7 @@ def plot_verdict_distribution(
     ax.set_xticks(list(positions), paths_)
     ax.set_ylabel("verdicts")
     ax.set_title("Verdict distribution by coordination path")
+    _angle_labels(ax, paths_)
     if verdicts:
         ax.legend()
     _save(fig, path)
@@ -290,13 +338,14 @@ def plot_verdict_distribution(
 
 def plot_revision_rounds(rounds_per_session: dict[str, int], path: Path) -> None:
     """Bar chart: revision rounds each recorded run went through."""
-    fig, ax = plt.subplots()
     sessions = sorted(rounds_per_session)
     labels = [f"run {i + 1}" for i in range(len(sessions))]
+    fig, ax = _category_axes(labels)
     values = [rounds_per_session[session] for session in sessions]
     ax.bar(labels, values)
     ax.set_ylabel("revision rounds")
     ax.set_title("Revision rounds per run")
+    _angle_labels(ax, labels)
     _save(fig, path)
 
 

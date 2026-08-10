@@ -40,10 +40,10 @@ class Settings(BaseSettings):
     # corresponding build_*_prompt function, never a silent fallback.
     planner_prompt_version: str = "p1"
     researcher_prompt_version: str = "r1"
-    # c2, not c1: stage 11 experiment 4 measured verdict_is_justified 0.66
-    # (c1) vs 0.95 (c2) over three 18-row LangSmith sweeps per arm, ranges
+    # c2, not c1: experiment 4 measured verdict_is_justified 0.67 (c1) vs
+    # 0.95 (c2) over three 18-row LangSmith sweeps per arm, ranges
     # non-overlapping, no cost/token penalty --
-    # output/20260809-experiment-4-critic-prompt.md.
+    # output/20260810-experiment-4-critic-prompt.md.
     critic_prompt_version: str = "c2"
     supervisor_prompt_version: str = "s1"
 

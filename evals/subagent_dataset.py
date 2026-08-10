@@ -1,9 +1,8 @@
 """Sub-agent-only rows: the Planner and the Critic invoked directly, with no
 Supervisor/Orchestrator around them and no `save_report` interrupt to drive
-through. Isolates what each sub-agent contributes on its own, the way
-`docs/implementation-plan-hl8.md`'s experiment 6 ("Planner on/off") and the
-Critic prompt `c1` vs `c2` comparison (experiment 4) both need real
-per-sub-agent numbers rather than only the numbers a full trajectory
+through. Isolates what each sub-agent contributes on its own, the way the "Planner
+on/off" experiment and the Critic prompt `c1` vs `c2` comparison both need
+real per-sub-agent numbers rather than only the numbers a full trajectory
 produces.
 
 Both kinds share one LangSmith dataset (`Settings.subagent_eval_dataset_name`)
