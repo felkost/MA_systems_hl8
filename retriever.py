@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -212,17 +213,52 @@ def build_retriever(
     )
 
 
+_retriever_lock = threading.Lock()
+
+
 @lru_cache(maxsize=1)
+def _cached_retriever() -> BaseRetriever:
+    return build_retriever(load_settings())
+
+
 def get_retriever() -> BaseRetriever:
     """Build the retriever once and hand the same one to every caller.
+
+    Returns
+    -------
+    BaseRetriever
+        The one retriever this process uses, built on first call.
+
+    See Also
+    --------
+    clear_retriever_cache : Drop the cached instance.
 
     Notes
     -----
     Loading the cross encoder takes several seconds and about 1.1 GB of
     memory. Building it once per tool call would make every search several
     seconds slower. The cache lasts for the life of the process.
+
+    The lock is what makes "once" true. `lru_cache` alone caches a result
+    but does not serialise the call that produces it: concurrent first
+    callers all miss the empty cache and all build. Measured, not assumed --
+    a four-worker evaluation sweep loaded four cross encoders and died with
+    a segmentation fault.
     """
-    return build_retriever(load_settings())
+    with _retriever_lock:
+        return _cached_retriever()
+
+
+def clear_retriever_cache() -> None:
+    """Drop the cached retriever so the next call rebuilds it.
+
+    Notes
+    -----
+    Takes the same lock as `get_retriever`: clearing the cache while
+    another thread is mid-build is the same race in reverse.
+    """
+    with _retriever_lock:
+        _cached_retriever.cache_clear()
 
 
 def _verify_manifest(settings: Settings) -> dict[str, Any]:

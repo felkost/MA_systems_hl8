@@ -22,7 +22,7 @@ when the project closes out.
 - [x] Stage 8 — telemetry and reports
 - [x] Stage 9 — LangSmith evaluation
 - [x] Stage 10 — knowledge graph (Neo4j)
-- [ ] Stage 11 — experiments
+- [x] Stage 11 — experiments
 - [ ] Stage 12 — documentation and final report
 
 ## License

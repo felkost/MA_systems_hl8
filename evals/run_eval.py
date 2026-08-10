@@ -147,6 +147,13 @@ def make_end_to_end_target(
             "output_dir": example_output_dir,
             "tools_log": str(telemetry.tools_log_path(run_settings, thread_id)),
             "verdicts_log": str(telemetry.verdict_log_path(run_settings, thread_id)),
+            # `evaluators.revision_converged` reads this to tell a
+            # deliberate cap-out (REVISE at the last allowed round) from a
+            # run that simply never converged -- without it, that branch is
+            # unreachable and the metric collapses to "last verdict ==
+            # APPROVE" regardless of `max_revisions`, silently defeating the
+            # one experiment (stage 11, #2) that varies this setting.
+            "max_revisions": settings.max_revisions,
         }
 
     return target
